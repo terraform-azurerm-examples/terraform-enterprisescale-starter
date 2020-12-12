@@ -1,0 +1,146 @@
+# Subscription vending machine
+#
+# * Identity stored in KV needs permissions to create subscriptions
+# * Build agent needs Azure DevOps permissions to create PRs
+#
+# Needs runtime variables:
+# - managementGroupId
+# - tags (myTag=MyVal myTag2=MyVal2) - tags with spaces should be in the form of "my tag=my val" "my tag2=my val2"
+# - subscriptionOwnerIds (object IDs of sub owners, space seperated)
+# - subscriptionDisplayName
+# - azureRegion (short Azure region, e.g. uksouth/westeurope)
+# - vnetAddressSpace (CIDR value for virtual network address space note: MUST ESCAPE THE SLASH, e.g. 10.1.1.0\/24)
+# - subscriptionEnvironment (dev or prod - referring to MG hierarchy not prod/nonprod)
+# - prodNonProd (prod or nonprod to determine network peering vnets)
+#
+# To run pipeline using az cli
+#
+# az pipelines run --id *** \
+#                  --branch main \
+#                  --variables createSubscription=false \
+#                              enrollmentAccountObjectId= \
+#                              managementGroupId= \
+#                              subscriptionDisplayName=MySub \
+#                              subscriptionownerObjectIds= \
+#                              tags="mytag=myval mytag2=myval2" \
+#                              subscriptionEnvironment=dev \
+#                              azureRegion=westeurope \
+#                              # note the double escape '\\' here, this is required for cli but only a single escape is needed in the web UI:
+#                              vnetAddressSpace="192.168.32.0\\/24" \
+#                              prodNonProd=nonprod
+#
+###############################################################################
+
+trigger: none
+pool: 
+
+variables:
+  azureDevOpsOrganization: https://dev.azure.com/<AzureDevOpsOrg>
+  azureDevOpsProject: <Azure DevOps Project>
+  ARM_TENANT_ID: 
+  pipelineAadObjectId: 
+
+steps:
+- checkout: self
+  persistCredentials: true
+
+- task: AzureKeyVault@1
+  inputs:
+    azureSubscription: 
+    keyVaultName: 
+    secretsFilter: 'ARMCLIENTSECRET,ARMCLIENTID,ARMSUBSCRIPTIONID'
+    runAsPreJob: false # Azure DevOps Services only
+
+- script: |
+    env | sort
+  displayName: Echo input vars
+
+- script: |
+    az extension add --name azure-devops
+    az extension add --name subscription
+    az login --service-principal --allow-no-subscriptions -u $ARM_CLIENT_ID -p $ARM_CLIENT_SECRET --tenant $ARM_TENANT_ID
+  displayName: az login with SPN
+  env:
+    ARM_CLIENT_ID: $(ARMCLIENTID)
+    ARM_CLIENT_SECRET: $(ARMCLIENTSECRET)
+
+- script: |
+    # Take the subscripton owner inputs and construct a command line
+    # in the form of "--owner-object-id xxx-yyy --owner-object-id aaa-bbb ..."
+    # Make sure we add this pipeline's SPN to the subscription owner so we can tag it
+    OWNERCMDLINE=" --owner-object-id $PIPELINEAADOBJECTID"
+    for id in "${SUBSCRIPTIONOWNERIDS[@]}"; do OWNERCMDLINE="${OWNERCMDLINE} --owner-object-id $i"; done
+    # Create the subscription
+    SUB=$(az account create --enrollment-account-object-id $ENROLLMENTACCOUNTOBJECTID \
+                             --offer-type $OFFERTYPE \
+                             --display-name $SUBSCRIPTIONDISPLAYNAME \
+                               $OWNERCMDLINE)
+    # Check we have a valid JSON response back from the API
+    SUB=$(echo $SUB | jq -re .subscriptionLink)
+    echo "##vso[task.setvariable variable=subscriptionId]$(echo $SUB | cut -f3 -d/)"
+  displayName: Create subscription
+  condition: and(succeeded(), eq(variables['createSubscription'], 'true'))
+
+- script: echo "##vso[task.setvariable variable=subscriptionId]********-****-****-****-************"
+  displayName: Mock subscription creation (for testing pipeline)
+  condition: and(succeeded(), eq(variables['createSubscription'], 'false'))
+
+- script: |
+    az tag create --resource-id /subscriptions/$(subscriptionId) --tags $(tags)
+  displayName: Tag subscription
+  condition: and(succeeded(), not(eq(variables['tags'], '')))
+
+- script: |
+    az devops configure --defaults organization=$(azureDevOpsOrganization) project=$(azureDevOpsProject)
+  displayName: Configure az devops defaults
+
+- script: |
+    git checkout -b subvend$(Build.BuildId)
+  displayName: Create new branch
+
+- script: |
+    grep -si $SUBSCRIPTIONID sub2mg.csv || echo "$SUBSCRIPTIONID,$MANAGEMENTGROUPID" | tee -a sub2mg.csv
+  displayName: Append new subscription to the sub2mg.csv file if it doesn't already exist
+  condition: and(succeeded(),not(eq(variables['managementGroupId'], '')))
+
+- script: |
+    echo "Copy template file..."
+    cp _TEMPLATE/corp_lz_template.tf ./lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed subscription id..."
+    sed -i s/SUBSCRIPTIONID/$SUBSCRIPTIONID/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed region..."
+    sed -i s/REGION/$AZUREREGION/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed address space..."
+    sed -i s/VNETADDRESSSPACE/$VNETADDRESSSPACE/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed environment..."
+    sed -i s/ENVIRONMENT/$SUBSCRIPTIONENVIRONMENT/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed subdisplayname..."
+    sed -i s/SUBSCRIPTIONDISPLAYNAME/$SUBSCRIPTIONDISPLAYNAME/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    echo "sed prodNonProd..."
+    sed -i s/PRODNONPROD/$PRODNONPROD/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+  displayName: Create LZ Terraform config
+
+- script: |
+    git config --global user.email "auto.no-reply@contoso.com"
+    git config --global user.name "SubVendingPipeline"
+  displayName: Set Git user details
+
+- script: |
+    git add lz_$(subscriptionId).$(subscriptionEnvironment).tf *.csv
+    git commit -m 'New LZ: $(subscriptionEnvironment) $(subscriptionId)'
+    git push --set-upstream origin subvend$(Build.BuildId)
+  displayName: Git add, commit and push to origin
+
+- script: |
+    az repos pr create \
+      --auto-complete false \
+      --delete-source-branch true \
+      --repository $(Build.Repository.Name) \
+      --squash true \
+      --title "New LZ: $(subscriptionEnvironment) $(subscriptionId)" \
+      --source-branch subvend$(Build.BuildId) \
+      --target-branch main
+  displayName: Create PR
+  env:
+    AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+ 
