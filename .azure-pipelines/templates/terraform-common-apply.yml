@@ -1,0 +1,39 @@
+steps:
+- checkout: self
+
+- task: CopyFiles@2
+  inputs:
+    SourceFolder: $(Agent.BuildDirectory)/s/
+    TargetFolder: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+    Contents: |
+      **/*
+      !.git/**/*
+  displayName: Copy files to staging directory (excluding .git)
+
+- task: AzureKeyVault@1
+  inputs:
+    azureSubscription: $(azureSubscription)
+    keyVaultName: $(keyVaultName)
+    secretsFilter: '*'
+    runAsPreJob: false
+
+- task: DownloadPipelineArtifact@2
+  inputs:
+    targetPath: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+    ArtifactName: tfplan
+  displayName: Download plan
+
+- script: find . -not -iname *.json -type f | xargs chmod ug+x
+  displayName: Set exec bit on plugins
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>/.terraform/plugins
+
+# Applies terraform plan ‘tfplan’ from previous step
+- script: terraform apply -no-color -input=false 'tfplan'
+  displayName: Terraform apply
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+  env:
+    ARM_CLIENT_ID: $(ARMCLIENTID)
+    ARM_CLIENT_SECRET: $(ARMCLIENTSECRET)
+    ARM_SUBSCRIPTION_ID: $(ARMSUBSCRIPTIONID)
+    TF_VAR_peering_client_secret: $(peering-client-secret)
+    TF_VAR_peering_client_id: $(peering-client-id)

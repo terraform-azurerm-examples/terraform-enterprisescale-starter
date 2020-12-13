@@ -10,7 +10,6 @@ pool: terraform
 variables:
   environment: prod
   TF_IN_AUTOMATION: 1
-  ARM_TENANT_ID: 
   keyvaultName: 
 
 steps:
@@ -21,13 +20,13 @@ steps:
     inputs:
       azureSubscription: 
       KeyVaultName: $(keyvaultName)
-      SecretsFilter: 'azdevopspat,ARMCLIENTSECRET,ARMCLIENTID,ARMSUBSCRIPTIONID'
+      SecretsFilter: 'azdopat,ARMCLIENTSECRET,ARMCLIENTID,ARMSUBSCRIPTIONID'
       RunAsPreJob: false
 
   - task: CmdLine@2
     displayName: Replace Tokens
     inputs:
-      script: sed -i s/PATTOKEN1/$(azdevoptpat)/ *.tf
+      script: sed -i s/PATTOKEN1/$(azdopat)/ *.tf
 
   - script: |
       terraform init -no-color -input=false -backend-config=backend-$(environment).hcl
