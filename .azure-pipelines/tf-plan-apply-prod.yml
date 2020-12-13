@@ -10,13 +10,14 @@ trigger:
   paths:
     exclude: # This pipeline will not trigger for changes to below files and folders 
     - .azure-pipelines/*
-    - readme.md
+    - '*.md'
 
 variables:
-  TF_IN_AUTOMATION: 1
-  ARM_TENANT_ID: '' # The target Azure Tenant ID
+  ARM_USE_MSI: 1
+  azureSubscription: azure-sub-mgmt
+  environment: prod
   keyvaultName: '' # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
-  environment: dev
+  TF_IN_AUTOMATION: 1
 
 stages:      
   # This stage contains the necessary steps to validate and initialise Terraform
@@ -25,15 +26,24 @@ stages:
     jobs:
     - job: tfplanjob
       displayName: Terraform plan job
-      pool: ''
+      pool: terraform
       steps:  
 
-      # This step ensures that either the pipeline is running due to a PR from main into dev, or due to individual CI
-      # for dev. This step will error if any other branch is pr’d into dev.
+      # This step ensures that either the pipeline is running due to a PR from main into prod, or due to individual CI
+      # for prod. This step will error if any other branch is pr’d into prod.
       - script: |
-          echo "Source branch not main or pipeline has been triggered manually. Only Main can be merged into Dev."
+          echo "PR validation builds must run from main branch. Manual or CI builds must run from prod branch."
           exit 1
-        condition: not(or(eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/main'),and(in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'), eq(variables['Build.SourceBranchName'],'dev'))))
+        condition: |
+          not(
+            or(
+              eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/main'),
+              and(
+                in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
+                eq(variables['Build.SourceBranchName'],'prod')
+              )
+            )
+          )
         displayName: Check if PR from main or CI for dev
 
       # Checkout the repo
@@ -56,7 +66,7 @@ stages:
       - task: AzureKeyVault@1
         displayName: Download Secrets
         inputs:
-          azureSubscription: ''
+          azureSubscription: $(azureSubscription)
           KeyVaultName: $(keyvaultName)
           SecretsFilter: '*'
           RunAsPreJob: false
@@ -66,15 +76,15 @@ stages:
         displayName: Replace Tokens
         inputs:
           script: |
-            sed -i s/PATTOKEN1/$(azdevoptpat)/ *.tf
+            sed -i s/PATTOKEN1/$(azdopat)/ *.tf
           workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
 
-      # Preserve the environment specific .tf files, e.g. if dev delete .prod.tf files and visa-versa
+      # Preserve the environment specific .tf files, e.g. if canary delete .prod.tf files and visa-versa
       - script: |
           if [ "$ENVIRONMENT" == "prod" ]; then
-            rm -vf *.dev.tf
+            rm -vf *.canary.tf
           fi
-          if [ "$ENVIRONMENT" == "dev" ]; then
+          if [ "$ENVIRONMENT" == "canary" ]; then
             rm -vf *.prod.tf
           fi
         workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
@@ -86,9 +96,9 @@ stages:
         displayName: Terraform init
         workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
         env:
-          ARM_CLIENT_ID: $(ARMCLIENTID)
-          ARM_CLIENT_SECRET: $(ARMCLIENTSECRET)
-          ARM_SUBSCRIPTION_ID: $(ARMSUBSCRIPTIONID)
+          ARM_CLIENT_ID: $(arm-client-id)
+          ARM_CLIENT_SECRET: $(arm-client-secret)
+          ARM_SUBSCRIPTION_ID: $(arm-subscription-id)
 
       # Check that the Terraform configuration is syntactically valid
       - script: terraform validate
@@ -100,7 +110,7 @@ stages:
         displayName: Terraform fmt check
         workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
 
-      # Perform lint checks on Terraform files
+      # Perform linting on Terraform files (Azure tflint config is baked into container image)
       - script: tflint
         displayName: TFlint
         workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
@@ -109,7 +119,7 @@ stages:
       # Run Terraform show on the plan to generate a JSON of the plan
       - script: | 
           terraform plan -no-color -input=false -out='tfplan' -var-file='variables-$(environment).tfvars' -detailed-exitcode
-          echo "##vso[task.setvariable variable=planCode]$?"
+          echo "##vso[task.setvariable variable=planCode;isOutput=true]$?"
           terraform show -json tfplan > tfplan.json
           echo "##vso[task.setvariable variable=jsonPlanFilePath;isOutput=true]$(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>/tfplan.json"
         displayName: Terraform plan
@@ -121,22 +131,14 @@ stages:
           ARM_SUBSCRIPTION_ID: $(ARMSUBSCRIPTIONID)
           TF_VAR_peering_client_secret: $(peering-client-secret)
           TF_VAR_peering_client_id: $(peering-client-id)
-        continueOnError: true
+        continueOnError: true # required due to -detailed-exitcode
 
       # If there are Terraform errors, quit the pipeline
       - script: |
           echo "Terraform plan exit code was '1' - review previous step"
           exit 1
         displayName: Quit if plan error
-        condition: and(always(), eq(variables['planCode'], '1'))
-
-      # If no changes are detected set output variable
-      - script: |
-          echo "Terraform plan resulted in no changes"
-          echo "##vso[task.setvariable variable=noChanges;isOutput=true]true"
-        displayName: Set output var if no changes to be applied
-        name: warnIfNoChanges
-        condition: and(always(), eq(variables['planCode'], '0'))
+        condition: and(always(), eq(variables['plan.planCode'], '1'))
 
       # Publish the tfplan and Terraform config for the apply stage
       - task: PublishPipelineArtifact@1
@@ -144,17 +146,22 @@ stages:
           targetPath: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
           ArtifactName: tfplan
         displayName: Publish plan
-        condition: and(always(), eq(variables['planCode'], '2'))
+        condition: and(always(), eq(variables['plan.planCode'], '2'))
 
       # If this pipeline is running due to a PR, comment on the PR with planned Terraform changes
       - task: PowerShell@2
         displayName: 'Comment PR with Terraform Plan'
-        condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), eq(variables['planCode'], '2'))
+        condition: |
+          and(
+            succeeded(),
+            eq(variables['Build.Reason'], 'PullRequest'),
+            eq(variables['plan.planCode'], '2')
+          )
         enabled: true
         inputs:
-          filePath: '$(Agent.BuildDirectory)/s/TerraformAnnotate.ps1'
+          filePath: '$(Agent.BuildDirectory)/s/scripts/TerraformAnnotate.ps1'
           arguments: '-JsonPlanPath $(plan.jsonPlanFilePath)'
-          workingDirectory: '$(Agent.BuildDirectory)/s'
+          workingDirectory: '$(Agent.BuildDirectory)/s/scripts'
         env:
           SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
@@ -162,12 +169,17 @@ stages:
   - stage: apply
     displayName: Terraform apply
     dependsOn: plan
-    condition: and(succeeded(), in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'))
+    condition: |
+      and(
+        succeeded(),
+        in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual')
+      )
     jobs:
     - job: tfapplyjob
       displayName: Terraform apply job
-      condition: not(eq(stageDependencies.plan.planjob.outputs['warnIfNoChanges.noChanges'], 'true')) #Do not run if there are no changes in the TF plan
-      pool: ''
+      condition: | # Only run if planCode == 2 (valid plan and changes required)
+        eq(stageDependencies.plan.planjob.outputs['plan.planCode'], '2')
+      pool: terraform
       steps:  
       - checkout: self
 
@@ -185,7 +197,7 @@ stages:
           azureSubscription: 
           keyVaultName: $(keyVaultName)
           secretsFilter: '*'
-          runAsPreJob: false # Azure DevOps Services only
+          runAsPreJob: false
 
       - task: DownloadPipelineArtifact@2
         inputs:
@@ -211,7 +223,7 @@ stages:
       displayName: Open PR
       dependsOn: tfapplyjob # Runs after apply, even if apply is skipped due to no changes (see condition below)
       condition: in(dependencies.tfapplyjob.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
-      pool: ''
+      pool: terraform
       steps:
 
       # Create a Pull Request into prod
@@ -226,6 +238,6 @@ stages:
             --source-branch $(Build.SourceBranchName) \
             --target-branch prod
         displayName: Create PR
-        continueOnError: true
+        continueOnError: true # required if PR exists already
         env:
           AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
