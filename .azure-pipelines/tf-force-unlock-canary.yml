@@ -3,14 +3,14 @@
 #
 # lockId - the lock Id locking the state that is to be removed
 
-name: terraform-force-unlock-prod
+name: terraform-force-unlock-canary
 
 trigger: none
 
 pool: terraform
 
 variables:
-  environment: prod
+  environment: canary
   keyvaultName: KEYVAULTNAME
 
 stages:

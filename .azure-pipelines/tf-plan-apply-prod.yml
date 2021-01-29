@@ -1,11 +1,13 @@
 # Azure DevOps Pipeline to perform a terraform init, terraform plan and terraform apply.
-# Pipeline will trigger when a pull request is made into DEV. Stage 1 will perform terraform validation, init and plan.
+# Pipeline will trigger when a pull request is made into prod. Stage 1 will perform terraform validation, init and plan.
 # A comment will be made on the PR with Terraform changes.
-# On PR approval, the pipeline will run again and in addition, will run Stage 2 Apply and apply changes to DEV.
+# On PR approval, the pipeline will run again and in addition, will run Stage 2 Apply and apply changes to prod.
+
+name: terraform-plan-apply-prod
 
 trigger:
   branches:
-    include: # Pipeline will only trigger for dev branch
+    include: # Pipeline will only trigger for prod branch
     - prod
   paths:
     exclude: # This pipeline will not trigger for changes to below files and folders 
@@ -15,8 +17,8 @@ trigger:
 variables:
   ARM_USE_MSI: 1
   azureSubscription: azure-sub-mgmt
-  environment: prod
-  keyvaultName: '' # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
+  keyvaultName: KEYVAULTNAME # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
+  skipComponentGovernanceDetection: true
   TF_IN_AUTOMATION: 1
 
 stages:      
@@ -24,29 +26,36 @@ stages:
   - stage: plan
     displayName: Terraform plan
     jobs:
-    - job: tfplanjob
-      displayName: Terraform plan job
+    - job: planjob
+      variables:
+        environment: prod
+      displayName: Terraform plan job (${{ variables['environment'] }})
       pool: terraform
-      steps:  
+      steps:
+      - script: env | sort
+        displayName: Display variables
+        enabled: false
 
-      # This step ensures that either the pipeline is running due to a PR from main into prod, or due to individual CI
-      # for prod. This step will error if any other branch is pr’d into prod.
       - script: |
-          echo "PR validation builds must run from main branch. Manual or CI builds must run from prod branch."
+          echo "PR validation builds must run from canary branch. Manual or CI builds must run from prod branch."
+          echo "Here are the environment variables to help debug:"
+          env | sort
           exit 1
         condition: |
           not(
             or(
-              eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/main'),
+              and(
+                eq(variables['Build.Reason'], 'PullRequest'),
+                eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/canary')
+              ),
               and(
                 in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
                 eq(variables['Build.SourceBranchName'],'prod')
               )
             )
           )
-        displayName: Check if PR from main or CI for dev
-    
-    - template: templates/terraform-common-plan.yml
+        displayName: Check if PR from canary or CI from prod
+      - template: templates/tf-common-plan.yml
 
   # This stage will run and apply Terraform changes if the pipeline is running after a PR merge   
   - stage: apply
@@ -58,33 +67,28 @@ stages:
         in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual')
       )
     jobs:
-    - job: tfapplyjob
-      displayName: Terraform apply job
-      condition: | # Only run if planCode == 2 (valid plan and changes required)
-        eq(stageDependencies.plan.planjob.outputs['plan.planCode'], '2')
-      pool: terraform
-      steps:  
-        - template: tempaltes/terraform-common-apply.yml
+    - template: templates/tf-common-apply.yml
 
-    - job: openprjob
-      displayName: Open PR
-      dependsOn: tfapplyjob # Runs after apply, even if apply is skipped due to no changes (see condition below)
-      condition: in(dependencies.tfapplyjob.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
-      pool: terraform
-      steps:
+    #  *** no need to create PR as we're already in prod **
+    #
+    # - job: openprjob
+    #   displayName: Open PR
+    #   dependsOn: tfapplyjob # Runs after apply, even if apply is skipped due to no changes (see condition below)
+    #   condition: in(dependencies.tfapplyjob.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
+    #   pool: terraform
+    #   steps:
 
-      # Create a Pull Request into prod
-      - script: |
-          az extension add --name azure-devops
-          az repos pr create \
-            --auto-complete false \
-            --delete-source-branch false \
-            --repository $(Build.Repository.Name) \
-            --title "$(Build.SourceVersionMessage)" \
-            --squash false \
-            --source-branch $(Build.SourceBranchName) \
-            --target-branch prod
-        displayName: Create PR
-        continueOnError: true # required if PR exists already
-        env:
-          AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+    #   # Create a Pull Request into prod
+    #   - script: |
+    #       az repos pr create \
+    #         --auto-complete false \
+    #         --delete-source-branch false \
+    #         --repository $(Build.Repository.Name) \
+    #         --title "$(Build.SourceVersionMessage)" \
+    #         --squash false \
+    #         --source-branch $(Build.SourceBranchName) \
+    #         --target-branch prod
+    #     displayName: Create PR
+    #     continueOnError: true # required if PR exists already
+    #     env:
+    #       AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

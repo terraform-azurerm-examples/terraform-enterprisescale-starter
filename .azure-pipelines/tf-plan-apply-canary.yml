@@ -1,0 +1,98 @@
+# Azure DevOps Pipeline to perform a terraform init, terraform plan and terraform apply.
+# Pipeline will trigger when a pull request is made into canary. Stage 1 will perform terraform validation, init and plan.
+# A comment will be made on the PR with Terraform changes.
+# On PR approval, the pipeline will run again and in addition, will run Stage 2 Apply and apply changes to canary.
+
+name: terraform-plan-apply-canary
+
+trigger:
+  branches:
+    include: # Pipeline will only trigger for canary branch
+    - canary
+  paths:
+    exclude: # This pipeline will not trigger for changes to below files and folders 
+    - .azure-pipelines/*
+    - '*.md'
+
+variables:
+  ARM_USE_MSI: 1
+  azureSubscription: azure-sub-mgmt
+  keyvaultName: KEYVAULTNAME # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
+  skipComponentGovernanceDetection: true
+  TF_IN_AUTOMATION: 1
+
+stages:
+  # This stage contains the necessary steps to validate and initialise Terraform
+  - stage: plan
+    displayName: Terraform plan
+    jobs:
+    - job: planjob
+      variables:
+        environment: canary
+      displayName: Terraform plan job (${{ variables['environment'] }})
+      pool: terraform
+      steps:
+      - script: env | sort
+        displayName: Display variables
+        enabled: false
+
+      - script: |
+          echo "PR validation builds must run from main branch. Manual or CI builds must run from canary branch."
+          echo "Here are the environment variables to help debug:"
+          env | sort
+          exit 1
+        condition: |
+          not(
+            or(
+              and(
+                eq(variables['Build.Reason'], 'PullRequest'),
+                eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/main')
+              ),
+              and(
+                in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
+                eq(variables['Build.SourceBranchName'],'canary')
+              )
+            )
+          )
+        displayName: Check if PR from main or CI from canary
+      - template: templates/tf-common-plan.yml
+
+  # This stage will run and apply Terraform changes if the pipeline is running after a PR merge   
+  - stage: apply
+    displayName: Terraform apply
+    dependsOn: plan
+    condition: |
+      and(
+        succeeded(),
+        in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual')
+      )
+    jobs:
+    - template: templates/tf-common-apply.yml
+
+    - job: openprjob
+      displayName: Open PR
+      dependsOn: tfapplyjob # Runs after apply, even if apply is skipped due to no changes (see condition below)
+      condition: in(dependencies.tfapplyjob.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
+      pool: terraform
+      steps:
+      - checkout: self
+        persistCredentials: true
+      # Create a Pull Request into prod if there are changes
+      - script: |
+          git fetch --all
+          git checkout $BUILD_SOURCEBRANCHNAME && git pull
+          git checkout prod && git pull
+          if [ "$(git diff --name-status $BUILD_SOURCEBRANCHNAME)" ]; then
+            az repos pr create \
+              --auto-complete false \
+              --delete-source-branch false \
+              --repository $(Build.Repository.Name) \
+              --title "ToProd: $(Build.SourceVersionMessage)" \
+              --squash false \
+              --source-branch $BUILD_SOURCEBRANCHNAME \
+              --target-branch prod
+          fi
+        displayName: Create PR
+        continueOnError: true # required if PR exists already
+        env:
+          AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

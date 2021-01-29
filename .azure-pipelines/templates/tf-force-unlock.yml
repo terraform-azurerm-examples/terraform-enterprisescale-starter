@@ -1,0 +1,34 @@
+stages:
+- stage: forceunlock
+  jobs:
+  - job: forceunlockjob
+    displayName: Force unlock
+    pool: terraform
+    variables:
+      ARM_USE_MSI: 1
+      environment: ${{ parameters.environment }}
+      skipComponentGovernanceDetection: true
+      TF_IN_AUTOMATION: 1
+    steps:
+    - checkout: self
+
+    - task: AzureKeyVault@1
+      displayName: Download Secrets
+      inputs:
+        azureSubscription: 
+        KeyVaultName: $(keyvaultName)
+        SecretsFilter: '*'
+        RunAsPreJob: false
+
+    - task: CmdLine@2
+      displayName: Replace Tokens
+      inputs:
+        script: sed -i s/PATTOKEN1/$(azdopat)/ *.tf
+
+    - script: |
+        terraform init -no-color -input=false -backend-config=backend-$(environment).hcl
+      displayName: Terraform init
+
+    - script: |
+        terraform force-unlock -force $LOCK_ID
+      displayName: Terraform force unlock

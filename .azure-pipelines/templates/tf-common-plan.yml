@@ -3,14 +3,12 @@ steps:
 - checkout: self
   persistCredentials: true
 
-- script: mkdir $(Build.ArtifactStagingDirectory)/tfroot
-  displayName: "Create 'tfroot' directory"
-
-# Copy Terraform files to a new directory
+# Copy Terraform files to a new directory so we don't modify the original repo.
+# We modify the files in this pipeline and don't want these changes being pushed back to the remote repo
 - task: CopyFiles@2
   inputs:
     SourceFolder: $(Agent.BuildDirectory)/s/
-    TargetFolder: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+    TargetFolder: $(Build.ArtifactStagingDirectory)/tfroot
     Contents: |
       **/*
       !.git/**/*
@@ -31,7 +29,7 @@ steps:
   inputs:
     script: |
       sed -i s/PATTOKEN1/$(azdopat)/ *.tf
-    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
 
 # Preserve the environment specific .tf files, e.g. if canary delete .prod.tf files and visa-versa
 - script: |
@@ -41,33 +39,29 @@ steps:
     if [ "$ENVIRONMENT" == "canary" ]; then
       rm -vf *.prod.tf
     fi
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
   displayName: Remove .tf files for other environment
 
 # Initialise Terraform, referencing the appropriate backend file
 - script: |
     terraform init -no-color -input=false -backend-config=backend-$(environment).hcl
   displayName: Terraform init
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
-  env:
-    ARM_CLIENT_ID: $(arm-client-id)
-    ARM_CLIENT_SECRET: $(arm-client-secret)
-    ARM_SUBSCRIPTION_ID: $(arm-subscription-id)
-
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
+  
 # Check that the Terraform configuration is syntactically valid
 - script: terraform validate
   displayName: Terraform validate
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
 
 # Check Terraform formatting is in canonical format
 - script: terraform fmt -check -recursive
   displayName: Terraform fmt check
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
 
 # Perform linting on Terraform files (Azure tflint config is baked into container image)
 - script: tflint
   displayName: TFlint
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
 
 # Run Terraform plan with the appropriate env vars and output the plan to a file called ‘tfplan’
 # Run Terraform show on the plan to generate a JSON of the plan
@@ -75,16 +69,10 @@ steps:
     terraform plan -no-color -input=false -out='tfplan' -var-file='variables-$(environment).tfvars' -detailed-exitcode
     echo "##vso[task.setvariable variable=planCode;isOutput=true]$?"
     terraform show -json tfplan > tfplan.json
-    echo "##vso[task.setvariable variable=jsonPlanFilePath;isOutput=true]$(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>/tfplan.json"
+    echo "##vso[task.setvariable variable=jsonPlanFilePath;isOutput=true]$(Build.ArtifactStagingDirectory)/tfroot/tfplan.json"
   displayName: Terraform plan
   name: plan
-  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
-  env:
-    ARM_CLIENT_ID: $(ARMCLIENTID)
-    ARM_CLIENT_SECRET: $(ARMCLIENTSECRET)
-    ARM_SUBSCRIPTION_ID: $(ARMSUBSCRIPTIONID)
-    TF_VAR_peering_client_secret: $(peering-client-secret)
-    TF_VAR_peering_client_id: $(peering-client-id)
+  workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
   continueOnError: true # required due to -detailed-exitcode
 
 # If there are Terraform errors, quit the pipeline
@@ -97,7 +85,7 @@ steps:
 # Publish the tfplan and Terraform config for the apply stage
 - task: PublishPipelineArtifact@1
   inputs:
-    targetPath: $(Build.ArtifactStagingDirectory)/tfroot/<AzureDevOpsProjectName>
+    targetPath: $(Build.ArtifactStagingDirectory)/tfroot
     ArtifactName: tfplan
   displayName: Publish plan
   condition: and(always(), eq(variables['plan.planCode'], '2'))

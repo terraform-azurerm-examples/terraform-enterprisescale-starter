@@ -1,0 +1,33 @@
+jobs:
+- job: tfapplyjob
+  displayName: Terraform apply job
+  condition: | # Only run if planCode == 2 (valid plan and changes required)
+    eq(stageDependencies.plan.planjob.outputs['plan.planCode'], '2')
+  variables:
+    ARM_USE_MSI: 1
+    TF_IN_AUTOMATION: 1
+  pool: terraform
+  steps:
+  - checkout: none
+
+  - task: AzureKeyVault@1
+    inputs:
+      azureSubscription: $(azureSubscription)
+      keyVaultName: $(keyVaultName)
+      secretsFilter: '*'
+      runAsPreJob: false
+
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/tfroot
+      ArtifactName: tfplan
+    displayName: Download plan
+
+  - script: find . -not -iname *.json -type f | xargs chmod ug+x
+    displayName: Set exec bit on plugins
+    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/.terraform/plugins
+
+  # Applies terraform plan ‘tfplan’ from previous step
+  - script: terraform apply -no-color -input=false 'tfplan'
+    displayName: Terraform apply
+    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
