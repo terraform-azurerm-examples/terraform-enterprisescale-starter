@@ -45,7 +45,7 @@ condition: |
           )
 ```
 
-Use of rebase and fast forward is recommended for merges into dev and prod. 
+Use of rebase and fast forward is recommended for merges into canary and prod. 
 
 ### Pipeline breakdown
 
