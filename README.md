@@ -54,7 +54,7 @@ Stage 1 – Terraform validate and plan
 Stage 2 – Terraform apply
 
 1.	A pull request is made from main into canary. Stage 1 of the pipeline triggers and carries out validation on the Terraform files. 
-2.	On success, the pipeline writes any planned Terraform changes to the pull request via a comment. This is performed by the script located here: **./scripts/TerraformAnnotate.ps1**,
+2.	On success, the pipeline writes any planned Terraform changes to the pull request via a comment. This is performed by the script located here: **./scripts/TerraformAnnotate.ps1**.
 3.	Once this comment has been approved and the pull request has been approved (and other checks have passed), main will be merged to canary, and the pipeline will trigger again. Stage 1 produces a tfplan. 
 4.	Stage 2 runs if Stage 1 succeeds and consumes the tfplan artefact to perform the terraform apply step.
 5.	Any changes in the plan are carried out by Terraform
