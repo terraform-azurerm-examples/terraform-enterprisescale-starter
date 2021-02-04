@@ -1,7 +1,6 @@
 # Azure DevOps Pipeline to perform a validate config prior to approving PRs
 # Pipeline will trigger on commit to any branch other than canary or prod
 # A comment will be made on the PR with Terraform changes.
-# On PR approval, the pipeline will run again and in addition, will run Stage 2 Apply and apply changes to canary.
 
 name: terraform-build-validation
 
