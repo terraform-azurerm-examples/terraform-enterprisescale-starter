@@ -6,7 +6,6 @@ stages:
     pool: terraform
     variables:
       ARM_USE_MSI: 1
-      environment: ${{ parameters.environment }}
       skipComponentGovernanceDetection: true
       TF_IN_AUTOMATION: 1
     steps:
