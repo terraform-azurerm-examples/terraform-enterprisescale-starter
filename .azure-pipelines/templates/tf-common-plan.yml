@@ -3,6 +3,9 @@ steps:
 - checkout: self
   persistCredentials: true
 
+- script: env | sort
+  displayName: Display env vars
+
 # Copy Terraform files to a new directory so we don't modify the original repo.
 # We modify the files in this pipeline and don't want these changes being pushed back to the remote repo
 - task: CopyFiles@2
@@ -69,7 +72,6 @@ steps:
     terraform plan -no-color -input=false -out='tfplan' -var-file='variables-$(environment).tfvars' -detailed-exitcode
     echo "##vso[task.setvariable variable=planCode;isOutput=true]$?"
     terraform show -json tfplan > tfplan.json
-    echo "##vso[task.setvariable variable=jsonPlanFilePath;isOutput=true]$(Build.ArtifactStagingDirectory)/tfroot/tfplan.json"
   displayName: Terraform plan
   name: plan
   workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
@@ -82,13 +84,19 @@ steps:
   displayName: Quit if plan error
   condition: and(always(), eq(variables['plan.planCode'], '1'))
 
-# Publish the tfplan and Terraform config for the apply stage
+# Publish the tfplan and Terraform config for the apply stage if we are on a deployment branch
 - task: PublishPipelineArtifact@1
   inputs:
     targetPath: $(Build.ArtifactStagingDirectory)/tfroot
     ArtifactName: tfplan
   displayName: Publish plan
-  condition: and(always(), eq(variables['plan.planCode'], '2'))
+  condition: |
+    and(
+      always(),
+      in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'),
+      in(variables['Build.SourceBranchName'], 'canary', 'prod'),
+      eq(variables['plan.planCode'], '2')
+    )
 
 # If this pipeline is running due to a PR, comment on the PR with planned Terraform changes
 - task: PowerShell@2
@@ -99,10 +107,9 @@ steps:
       eq(variables['Build.Reason'], 'PullRequest'),
       eq(variables['plan.planCode'], '2')
     )
-  enabled: true
   inputs:
-    filePath: '$(Agent.BuildDirectory)/s/scripts/TerraformAnnotate.ps1'
-    arguments: '-JsonPlanPath $(plan.jsonPlanFilePath)'
-    workingDirectory: '$(Agent.BuildDirectory)/s/scripts'
+    filePath: $(Build.ArtifactStagingDirectory)/tfroot/scripts/TerraformAnnotate.ps1
+    arguments: -JsonPlanPath ./tfplan.json
+    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot
   env:
     SYSTEM_ACCESSTOKEN: $(System.AccessToken)

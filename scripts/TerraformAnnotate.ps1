@@ -15,6 +15,8 @@ function ToIcon($action) {
     }
 }
 
+$request = @{ comments = New-Object Collections.ArrayList; status = "active" }
+
 if (-not $changes) {
     $comment = @{ content = "**Terraform Plan changes summary :**`r`nNo Changes ! :thumbsup:`r`n`r`nThis comment thread is closed as there are no changes !"; commentType = "text" }
     $request.status = "closed"
@@ -45,5 +47,5 @@ $linkUrl = [System.Uri]::EscapeUriString("${env:System_TeamFoundationCollectionU
 $comment.content += "`r`nSee [Pipeline ${env:BUILD_BUILDNUMBER} logs]($linkUrl)"
 
 $request.comments.Add($comment) | Out-Null
-$url = "${env:System_TeamFoundationCollectionUri}${env:System_TeamProject}/_apis/git/repositories/${env:Build_Repository_ID}/pullRequests/${env:system_pullRequest_pullRequestId}/threads?api-version=5.1"
+$url = "${env:SYSTEM_TEAMFOUNDATIONCOLLECTIONURI}${env:SYSTEM_TEAMPROJECT}/_apis/git/repositories/${env:BUILD_REPOSITORY_ID}/pullRequests/${env:SYSTEM_PULLREQUEST_PULLREQUESTID}/threads?api-version=5.1"
 Invoke-RestMethod -Method "POST" -Uri $url -Body ($request | ConvertTo-Json) -ContentType "application/json" -Headers @{ Authorization = "Bearer ${env:SYSTEM_ACCESSTOKEN}" }

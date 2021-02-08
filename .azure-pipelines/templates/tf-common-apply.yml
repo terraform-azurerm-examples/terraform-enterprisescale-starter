@@ -25,7 +25,7 @@ jobs:
 
   - script: find . -not -iname *.json -type f | xargs chmod ug+x
     displayName: Set exec bit on plugins
-    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/.terraform/plugins
+    workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/.terraform/providers
 
   # Applies terraform plan ‘tfplan’ from previous step
   - script: terraform apply -no-color -input=false 'tfplan'

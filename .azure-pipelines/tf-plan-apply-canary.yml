@@ -15,9 +15,11 @@ trigger:
     - '*.md'
 
 variables:
+  ARM_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000
+  ARM_TENANT_ID: 00000000-0000-0000-0000-000000000000
   ARM_USE_MSI: 1
   azureSubscription: azure-sub-mgmt
-  keyvaultName: KEYVAULTNAME # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
+  keyvaultName: keyvaultname # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
   skipComponentGovernanceDetection: true
   TF_IN_AUTOMATION: 1
 
