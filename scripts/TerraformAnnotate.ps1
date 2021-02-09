@@ -43,7 +43,7 @@ else {
     $comment.content += "`r`nThis comment thread is active, don't forget to mark it as resolved or won't fix !"    
 }
 
-$linkUrl = [System.Uri]::EscapeUriString("${env:System_TeamFoundationCollectionUri}${env:System_TeamProject}/_build/results?buildId=${env:BUILD_BUILDID}&view=logs&j=${env:SYSTEM_JOBID}")
+$linkUrl = [System.Uri]::EscapeUriString("${env:SYSTEM_TEAMFOUNDATIONCOLLECTIONURI}${env:SYSTEM_TEAMPROJECT}/_build/results?buildId=${env:BUILD_BUILDID}&view=logs&j=${env:SYSTEM_JOBID}")
 $comment.content += "`r`nSee [Pipeline ${env:BUILD_BUILDNUMBER} logs]($linkUrl)"
 
 $request.comments.Add($comment) | Out-Null
