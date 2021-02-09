@@ -15,11 +15,11 @@ trigger:
     - '*.md'
 
 variables:
-  ARM_SUBSCRIPTION_ID: 00000000-0000-0000-0000-000000000000
-  ARM_TENANT_ID: 00000000-0000-0000-0000-000000000000
+  ARM_SUBSCRIPTION_ID: c953b194-7fa9-439e-9535-49003de2bf00
+  ARM_TENANT_ID: bb4c9e42-b982-4573-8741-cb71d8b92af4
   ARM_USE_MSI: 1
   azureSubscription: azure-sub-mgmt
-  keyvaultName: keyvaultname # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
+  keyvaultName: KEYVAULTNAME # Key Vault containing Azure DevOps PAT and Azure Resource Manager secrets
   skipComponentGovernanceDetection: true
   TF_IN_AUTOMATION: 1
 
@@ -70,27 +70,3 @@ stages:
       )
     jobs:
     - template: templates/tf-common-apply.yml
-
-    #  *** no need to create PR as we're already in prod **
-    #
-    # - job: openprjob
-    #   displayName: Open PR
-    #   dependsOn: tfapplyjob # Runs after apply, even if apply is skipped due to no changes (see condition below)
-    #   condition: in(dependencies.tfapplyjob.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
-    #   pool: terraform
-    #   steps:
-
-    #   # Create a Pull Request into prod
-    #   - script: |
-    #       az repos pr create \
-    #         --auto-complete false \
-    #         --delete-source-branch false \
-    #         --repository $(Build.Repository.Name) \
-    #         --title "$(Build.SourceVersionMessage)" \
-    #         --squash false \
-    #         --source-branch $(Build.SourceBranchName) \
-    #         --target-branch prod
-    #     displayName: Create PR
-    #     continueOnError: true # required if PR exists already
-    #     env:
-    #       AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

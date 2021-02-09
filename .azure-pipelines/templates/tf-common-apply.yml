@@ -24,7 +24,7 @@ jobs:
     displayName: Download plan
 
   - script: find . -not -iname *.json -type f | xargs chmod ug+x
-    displayName: Set exec bit on plugins
+    displayName: Set exec bit on modules
     workingDirectory: $(Build.ArtifactStagingDirectory)/tfroot/.terraform/providers
 
   # Applies terraform plan ‘tfplan’ from previous step

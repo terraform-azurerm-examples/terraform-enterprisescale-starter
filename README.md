@@ -93,3 +93,21 @@ Once a pull request has been opened, there are 3 checks that must pass before co
 | main | squash | `tf-build-validation.yml` | 0 | Optional
 | canary | rebase | `tf-plan-apply-canary.yml` | 2 | Yes
 | prod | rebase | `tf-plan-apply-prod.yml` | 2 | Yes
+
+## Local Development
+
+### Terraform Init
+
+When running init locally (required for validate), use the following syntax:
+
+```bash
+terraform init -backend=false
+```
+
+### Pre-commit hook
+
+After checkout run this command to enable the pre-commit hook (and save yourself a lot of time!)
+
+```bash
+ln -s ../../pre-commit.sh .git/hooks/pre-commit
+```

@@ -1,71 +1,59 @@
 # Subscription vending machine
 #
-# * Identity stored in KV needs permissions to create subscriptions
+# * Identity needs permissions to create subscriptions
 # * Build agent needs Azure DevOps permissions to create PRs
 #
 # Needs runtime variables:
-# - managementGroupId
-# - tags (myTag=MyVal myTag2=MyVal2) - tags with spaces should be in the form of "my tag=my val" "my tag2=my val2"
-# - subscriptionOwnerIds (object IDs of sub owners, space seperated)
-# - subscriptionDisplayName
 # - azureRegion (short Azure region, e.g. uksouth/westeurope)
+# - createSubscription (true/false)
+# - managementGroupEnvironment (canary or prod - referring to MG hierarchy)
+# - managementGroupName (name, not displayname)
+# - workloadEnvironment (prod/dev/test - referring to workload classification)
+# - subscriptionDisplayName
+# - subscriptionOwnerIds (object IDs of sub owners, space seperated)
+# - tags (myTag=MyVal myTag2=MyVal2) - tags with spaces should be in the form of "my tag=my val" "my tag2=my val2"
 # - vnetAddressSpace (CIDR value for virtual network address space note: MUST ESCAPE THE SLASH, e.g. 10.1.1.0\/24)
-# - subscriptionEnvironment (dev or prod - referring to MG hierarchy not prod/nonprod)
-# - prodNonProd (prod or nonprod to determine network peering vnets)
 #
 # To run pipeline using az cli
 #
 # az pipelines run --id *** \
 #                  --branch main \
 #                  --variables createSubscription=false \
+#                              azureRegion=westeurope \
 #                              enrollmentAccountObjectId= \
-#                              managementGroupId= \
+#                              managementGroupEnvironment=canary \
+#                              managementGroupName= \
 #                              subscriptionDisplayName=MySub \
 #                              subscriptionownerObjectIds= \
 #                              tags="mytag=myval mytag2=myval2" \
-#                              subscriptionEnvironment=dev \
-#                              azureRegion=westeurope \
-#                              # note the double escape '\\' here, this is required for cli but only a single escape is needed in the web UI:
+#                              # note the double escape '\\' below, this is required for cli but only a single escape is needed in the web UI
 #                              vnetAddressSpace="192.168.32.0\\/24" \
-#                              prodNonProd=nonprod
+#                              workloadEnvironment= \
 #
 ###############################################################################
 
 trigger: none
-pool: 
+name: subscription-vanding-machine
+pool: terraform
 
 variables:
-  azureDevOpsOrganization: https://dev.azure.com/<AzureDevOpsOrg>
-  azureDevOpsProject: <Azure DevOps Project>
-  ARM_TENANT_ID: 
-  pipelineAadObjectId: 
+  pipelineAadObjectId:
+  skipComponentGovernanceDetection: true
 
 steps:
 - checkout: self
   persistCredentials: true
-
-- task: AzureKeyVault@1
-  inputs:
-    azureSubscription: 
-    keyVaultName: 
-    secretsFilter: 'ARMCLIENTSECRET,ARMCLIENTID,ARMSUBSCRIPTIONID'
-    runAsPreJob: false # Azure DevOps Services only
 
 - script: |
     env | sort
   displayName: Echo input vars
 
 - script: |
-    az extension add --name azure-devops
-    az extension add --name subscription
-    az login --service-principal --allow-no-subscriptions -u $ARM_CLIENT_ID -p $ARM_CLIENT_SECRET --tenant $ARM_TENANT_ID
-  displayName: az login with SPN
-  env:
-    ARM_CLIENT_ID: $(ARMCLIENTID)
-    ARM_CLIENT_SECRET: $(ARMCLIENTSECRET)
+    az login --identity --allow-no-subscriptions
+  displayName: az login with MSI
 
 - script: |
-    # Take the subscripton owner inputs and construct a command line
+    # Take the subscription owner inputs and construct a command line
     # in the form of "--owner-object-id xxx-yyy --owner-object-id aaa-bbb ..."
     # Make sure we add this pipeline's SPN to the subscription owner so we can tag it
     OWNERCMDLINE=" --owner-object-id $PIPELINEAADOBJECTID"
@@ -81,7 +69,7 @@ steps:
   displayName: Create subscription
   condition: and(succeeded(), eq(variables['createSubscription'], 'true'))
 
-- script: echo "##vso[task.setvariable variable=subscriptionId]********-****-****-****-************"
+- script: echo "##vso[task.setvariable variable=subscriptionId]b3158e43-005d-4f1d-a1e2-d14f1af7e210"
   displayName: Mock subscription creation (for testing pipeline)
   condition: and(succeeded(), eq(variables['createSubscription'], 'false'))
 
@@ -91,7 +79,7 @@ steps:
   condition: and(succeeded(), not(eq(variables['tags'], '')))
 
 - script: |
-    az devops configure --defaults organization=$(azureDevOpsOrganization) project=$(azureDevOpsProject)
+    az devops configure --defaults organization=$(System.CollectionUri) project=$(System.TeamProject)
   displayName: Configure az devops defaults
 
 - script: |
@@ -101,33 +89,33 @@ steps:
 - script: |
     grep -si $SUBSCRIPTIONID sub2mg.csv || echo "$SUBSCRIPTIONID,$MANAGEMENTGROUPID" | tee -a sub2mg.csv
   displayName: Append new subscription to the sub2mg.csv file if it doesn't already exist
-  condition: and(succeeded(),not(eq(variables['managementGroupId'], '')))
+  condition: and(succeeded(),not(eq(variables['managementGroupName'], '')))
 
 - script: |
     echo "Copy template file..."
-    cp _TEMPLATE/corp_lz_template.tf ./lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    cp _TEMPLATE/lz_template.tf ./lz_$(subscriptionId).$(managementGroupEnvironment).tf
     echo "sed subscription id..."
-    sed -i s/SUBSCRIPTIONID/$SUBSCRIPTIONID/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    sed -i s/SUBSCRIPTIONID/$SUBSCRIPTIONID/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
     echo "sed region..."
-    sed -i s/REGION/$AZUREREGION/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    sed -i s/REGION/$AZUREREGION/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
     echo "sed address space..."
-    sed -i s/VNETADDRESSSPACE/$VNETADDRESSSPACE/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    sed -i s/VNETADDRESSSPACE/$VNETADDRESSSPACE/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
     echo "sed environment..."
-    sed -i s/ENVIRONMENT/$SUBSCRIPTIONENVIRONMENT/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    sed -i s/MGENVIRONMENT/$managementGroupEnvironment/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
     echo "sed subdisplayname..."
-    sed -i s/SUBSCRIPTIONDISPLAYNAME/$SUBSCRIPTIONDISPLAYNAME/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
-    echo "sed prodNonProd..."
-    sed -i s/PRODNONPROD/$PRODNONPROD/g lz_$(subscriptionId).$(subscriptionEnvironment).tf
+    sed -i s/SUBSCRIPTIONDISPLAYNAME/$SUBSCRIPTIONDISPLAYNAME/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
+    echo "sed workloadEnvironment..."
+    sed -i s/WORKLOADENVIRONMENT/$WORKLOADENVIRONMENT/g lz_$(subscriptionId).$(managementGroupEnvironment).tf
   displayName: Create LZ Terraform config
 
 - script: |
-    git config --global user.email "auto.no-reply@contoso.com"
+    git config --global user.email "auto.no-reply@azure.com"
     git config --global user.name "SubVendingPipeline"
   displayName: Set Git user details
 
 - script: |
-    git add lz_$(subscriptionId).$(subscriptionEnvironment).tf *.csv
-    git commit -m 'New LZ: $(subscriptionEnvironment) $(subscriptionId)'
+    git add lz_$(subscriptionId).$(managementGroupEnvironment).tf *.csv
+    git commit -m 'New LZ: $(managementGroupEnvironment) $(subscriptionId)'
     git push --set-upstream origin subvend$(Build.BuildId)
   displayName: Git add, commit and push to origin
 
@@ -137,7 +125,7 @@ steps:
       --delete-source-branch true \
       --repository $(Build.Repository.Name) \
       --squash true \
-      --title "New LZ: $(subscriptionEnvironment) $(subscriptionId)" \
+      --title "New LZ: $(managementGroupEnvironment) $(subscriptionId)" \
       --source-branch subvend$(Build.BuildId) \
       --target-branch main
   displayName: Create PR
