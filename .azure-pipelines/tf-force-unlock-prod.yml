@@ -1,7 +1,7 @@
 # Pipeline to force unlock TF state
 # Required run time variables:
 #
-# lockId - the lock Id locking the state that is to be removed
+# lock_id - the lock Id locking the state that is to be removed
 
 name: terraform-force-unlock-prod
 
@@ -12,6 +12,7 @@ pool: terraform
 variables:
   environment: prod
   keyvaultName: KEYVAULTNAME
+  azureSubscription: azure-sub-mgmt
 
 stages:
-- template: tempaltes/tf-force-unlock.yml
+- template: templates/tf-force-unlock.yml

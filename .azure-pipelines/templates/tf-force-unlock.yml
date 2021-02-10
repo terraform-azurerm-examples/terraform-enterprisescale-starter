@@ -6,7 +6,6 @@ stages:
     pool: terraform
     variables:
       ARM_USE_MSI: 1
-      environment: ${{ parameters.environment }}
       skipComponentGovernanceDetection: true
       TF_IN_AUTOMATION: 1
     steps:
@@ -15,7 +14,7 @@ stages:
     - task: AzureKeyVault@1
       displayName: Download Secrets
       inputs:
-        azureSubscription: 
+        azureSubscription: $(azureSubscription)
         KeyVaultName: $(keyvaultName)
         SecretsFilter: '*'
         RunAsPreJob: false
