@@ -87,7 +87,7 @@ steps:
   displayName: Create new branch
 
 - script: |
-    grep -si $SUBSCRIPTIONID sub2mg.csv || echo "$SUBSCRIPTIONID,$MANAGEMENTGROUPID" | tee -a sub2mg.csv
+    grep -si $SUBSCRIPTIONID sub2mg.csv || echo "$SUBSCRIPTIONID,$MANAGEMENTGROUPNAME" | tee -a sub2mg.csv
   displayName: Append new subscription to the sub2mg.csv file if it doesn't already exist
   condition: and(succeeded(),not(eq(variables['managementGroupName'], '')))
 
